@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "csm"
+version = "0.1.0"
+description = "Claude Session Manager - spend leftover Claude Pro quota via Claude Code headless runs"
+requires-python = ">=3.10"
+
+[project.scripts]
+csm = "csm.cli:main"
+
+[tool.setuptools]
+packages = ["csm"]
