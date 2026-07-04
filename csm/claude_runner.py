@@ -83,24 +83,41 @@ def stripped_env(base: dict) -> tuple[dict, list]:
     return env, removed
 
 
-def build_command(cfg: dict, prompt: str, model: str, resume_id: str | None) -> list:
+def item_settings(cfg: dict, item: dict) -> tuple[str, str | None, str]:
+    """Resolve (model, effort, mode) for an item, falling back to config."""
+    model = item.get("model") or cfg["default_model"]
+    effort = item.get("effort") or cfg.get("default_effort")
+    mode = item.get("mode") or cfg.get("default_run_mode") or "safe"
+    return model, effort, mode
+
+
+def build_command(cfg: dict, item: dict, resume_id: str | None) -> list:
     binary = shutil.which(cfg["claude_binary"])
     if not binary:
         raise SystemExit(
             f"csm: '{cfg['claude_binary']}' not found on PATH. Install Claude Code "
             "and log in with your Pro account first."
         )
+    model, effort, mode = item_settings(cfg, item)
     cmd = [binary]
     if resume_id:
         cmd += ["--resume", resume_id]
     cmd += [
-        "-p", prompt + PROTOCOL,
+        "-p", item["prompt"] + PROTOCOL,
         "--output-format", "json",
         "--model", model,
     ]
-    if cfg["allowed_tools"]:
-        cmd += ["--allowedTools", ",".join(cfg["allowed_tools"])]
-    if cfg["disallowed_tools"]:
+    if effort:
+        cmd += ["--effort", effort]
+    if mode == "plan":
+        cmd += ["--permission-mode", "plan"]
+    elif mode == "full":
+        cmd += ["--dangerously-skip-permissions"]
+    else:  # safe
+        cmd += ["--permission-mode", "acceptEdits"]
+        if cfg["allowed_tools"]:
+            cmd += ["--allowedTools", ",".join(cfg["allowed_tools"])]
+    if mode != "plan" and cfg["disallowed_tools"]:
         cmd += ["--disallowedTools", ",".join(cfg["disallowed_tools"])]
     return cmd
 
@@ -138,8 +155,7 @@ def _extract_summary(text: str) -> str | None:
 
 
 def run_item(cfg: dict, item: dict, resume_id: str | None, env: dict) -> RunResult:
-    model = item.get("model") or cfg["default_model"]
-    cmd = build_command(cfg, item["prompt"], model, resume_id)
+    cmd = build_command(cfg, item, resume_id)
     res = RunResult()
     try:
         proc = subprocess.run(

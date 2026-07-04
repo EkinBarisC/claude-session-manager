@@ -30,13 +30,16 @@ def save_items(items: list) -> None:
 
 
 def add_item(prompt: str, project: str, model: str | None, priority: int,
-             force_new_session: bool) -> dict:
+             force_new_session: bool, effort: str | None = None,
+             mode: str | None = None) -> dict:
     items = load_items()
     item = {
         "id": secrets.token_hex(4),
         "prompt": prompt,
         "project": str(Path(project).resolve()),
         "model": model,
+        "effort": effort,
+        "mode": mode,
         "priority": priority,
         "force_new_session": force_new_session,
         "status": PENDING,
@@ -50,6 +53,19 @@ def add_item(prompt: str, project: str, model: str | None, priority: int,
     items.append(item)
     save_items(items)
     return item
+
+
+def find_item(items: list, token: str) -> tuple[dict | None, str | None]:
+    """Look up an item by id or unique id prefix. Returns (item, error)."""
+    matches = [i for i in items if i["id"] == token]
+    if not matches:
+        matches = [i for i in items if i["id"].startswith(token)]
+    if len(matches) == 1:
+        return matches[0], None
+    if not matches:
+        return None, f"no item matching '{token}'"
+    return None, (f"'{token}' is ambiguous: "
+                  + ", ".join(i["id"] for i in matches))
 
 
 def pending_items(items: list) -> list:

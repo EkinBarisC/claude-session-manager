@@ -21,31 +21,52 @@ billing. If the CLI isn't logged in, the run aborts instead of spending.
 ## Install
 
 ```powershell
-cd claude-session-manager
-pip install -e .
-csm init
+pipx install git+https://github.com/EkinBarisC/claude-session-manager
 ```
 
-(Or skip the install and use `py -m csm ...` from this directory.)
+or from a clone: `pip install .` (use `pip install -e .` for hacking on csm
+itself). Either way the `csm` command is then available from any terminal:
+
+```powershell
+csm init
+csm doctor               # verifies claude login, config, and the nightly job
+```
 
 ## Usage
 
+Every command supports `-h`/`--help`. Item ids can be abbreviated to any
+unique prefix (`csm show ff3`).
+
 ```powershell
-# Queue tasks (each targets a project directory)
-csm add "Add input validation to the signup form, with tests" --project C:\code\myapp
-csm add "Review src/auth for security issues, write findings to REVIEW.md" --project C:\code\myapp --priority 5
+# Queue tasks. --project/-C defaults to the current directory.
+csm add "Add input validation to the signup form, with tests"
+csm add "Review src/auth, write findings to REVIEW.md" -C C:\code\myapp --priority 5
 
-# See the queue, weekly spend, and session states
-csm status
+# Per-item model, effort, and run mode (fall back to config defaults)
+csm add "Plan the v2 schema migration" --mode plan --effort high
+csm add "Bulk-rename fixtures" -m haiku --effort low
 
-# Burn leftover quota right now (your manual daytime command)
-csm run
+# Inspect and manage the queue
+csm status               # overview: queue, weekly spend, sessions
+csm list                 # pending + failed items (ls works too; --all for everything)
+csm show <id>            # one item in full
+csm edit <id> --priority 9 --effort max
+csm rm <id> [<id>...]    # delete items
+csm clear                # drop done items (--all wipes the queue)
+csm requeue <id>         # put failed items back (--all for every failure)
 
-# Run only until 08:00 (what the nightly job does)
-csm run --until 08:00
+# Run
+csm run                  # burn leftover quota right now
+csm run --until 08:00    # what the nightly job does
+csm run --id <id>        # run one specific item
+csm run --dry-run        # preview without invoking claude
 
-# Preview without invoking claude
-csm run --dry-run
+# Settings from the CLI
+csm config               # show effective config
+csm config set default_effort low
+csm config set weekly_token_budget 2000000
+csm config unset default_effort
+csm config edit          # open config.json in your editor
 
 # Register the nightly job (daily at quiet_hours_start, wakes the PC,
 # runs until quiet_hours_end). Needs an elevated/admin PowerShell.
@@ -54,10 +75,19 @@ csm schedule --remove
 
 # Read the results over coffee
 csm report
-
-# Put a failed item back in the queue
-csm requeue <item-id>
 ```
+
+### Run modes
+
+| Mode | Meaning |
+|---|---|
+| `plan` | Read-only planning (`--permission-mode plan`). Good for design/review tasks. |
+| `safe` | Default. Edits, tests, and branch-local git via the config allowlist; push and destructive commands blocked. |
+| `full` | `--dangerously-skip-permissions`. Only for sandboxed/throwaway directories. |
+
+Effort (`low`–`max`) maps to `claude --effort`; lower effort stretches your
+quota across more items. Both have config-wide defaults (`default_run_mode`,
+`default_effort`) and per-item overrides on `csm add`/`csm edit`.
 
 ### First-time validation
 
@@ -97,9 +127,13 @@ csm report
 
 ## Configuration — `~/.csm/config.json`
 
+Edit via `csm config set/unset/edit`, or by hand (`csm config path`).
+
 | Key | Default | Meaning |
 |---|---|---|
 | `default_model` | `sonnet` | Model for items without `--model`. Pro has no Opus in Claude Code. |
+| `default_effort` | `medium` | `claude --effort` for items without `--effort` (`low`\|`medium`\|`high`\|`xhigh`\|`max`, or `null` for the CLI default). |
+| `default_run_mode` | `safe` | Run mode for items without `--mode` (`plan`\|`safe`\|`full`). |
 | `weekly_token_budget` | `1000000` | Rolling 7-day cap on weighted tokens (input + cache_creation + output + 0.1×cache_read). Tune after watching a week in `csm status`. |
 | `context_window_tokens` | `200000` | Model context window size. |
 | `context_rotate_pct` | `40` | Rotate to a fresh session past this % of the window. |
@@ -121,3 +155,22 @@ csm report
 - **Rate-limit parsing** is the one unofficial surface. If Claude Code changes
   its limit message, csm fails safe: the run stops and items stay pending.
 - State lives in `~/.csm/` (override with the `CSM_HOME` env var).
+
+## Contributing
+
+Issues and PRs welcome. To develop locally:
+
+```powershell
+git clone https://github.com/EkinBarisC/claude-session-manager
+cd claude-session-manager
+pip install -e .
+$env:CSM_HOME = "$env:TEMP\csm-dev"   # keep your real queue out of the way
+```
+
+CI runs a headless smoke test on Windows (no Claude login needed) — see
+[.github/workflows/ci.yml](.github/workflows/ci.yml). Releases are cut by
+pushing a `v*` tag, which builds the package and publishes a GitHub release.
+
+## License
+
+[MIT](LICENSE)

@@ -21,6 +21,14 @@ def install(start_hhmm: str, until_hhmm: str) -> int:
     return _powershell(ps)
 
 
+def exists() -> bool:
+    proc = subprocess.run(
+        ["schtasks", "/Query", "/TN", TASK_NAME],
+        capture_output=True, text=True,
+    )
+    return proc.returncode == 0
+
+
 def remove() -> int:
     ps = (
         f"Unregister-ScheduledTask -TaskName '{TASK_NAME}' -Confirm:$false; "

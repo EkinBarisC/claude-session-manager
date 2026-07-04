@@ -18,7 +18,7 @@ def resolve_until(until_hhmm: str | None) -> datetime | None:
 
 
 def run(until_hhmm: str | None = None, max_items: int | None = None,
-        dry_run: bool = False) -> int:
+        dry_run: bool = False, item_id: str | None = None) -> int:
     cfg = config.load()
     config.ensure_init()
     until = resolve_until(until_hhmm)
@@ -28,7 +28,18 @@ def run(until_hhmm: str | None = None, max_items: int | None = None,
         print(f"csm: stripped billing-capable env vars from claude subprocess: {', '.join(removed)}")
 
     items = queuefile.load_items()
-    todo = queuefile.pending_items(items)
+    if item_id:
+        item, err = queuefile.find_item(items, item_id)
+        if err:
+            print(f"csm: {err}")
+            return 1
+        if item["status"] != queuefile.PENDING:
+            print(f"csm: [{item['id']}] is {item['status']}, not pending "
+                  f"(use `csm requeue {item['id']}` to run it again)")
+            return 1
+        todo = [item]
+    else:
+        todo = queuefile.pending_items(items)
     if not todo:
         print("csm: queue is empty - nothing to run")
         return 0
@@ -58,9 +69,10 @@ def run(until_hhmm: str | None = None, max_items: int | None = None,
         if not item.get("force_new_session"):
             resume_id = sessions.resumable_session(registry, cfg, item["project"])
 
-        mode = f"resume {resume_id}" if resume_id else "new session (context.md pickup)"
-        print(f"csm: [{item['id']}] {item['project']} | {mode} | "
-              f"model={item.get('model') or cfg['default_model']}")
+        session = f"resume {resume_id}" if resume_id else "new session (context.md pickup)"
+        model, effort, run_mode = claude_runner.item_settings(cfg, item)
+        print(f"csm: [{item['id']}] {item['project']} | {session} | "
+              f"model={model} effort={effort or 'cli-default'} mode={run_mode}")
         if dry_run:
             ran += 1
             continue

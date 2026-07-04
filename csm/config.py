@@ -2,7 +2,13 @@
 
 import json
 import os
+import re
 from pathlib import Path
+
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+RUN_MODES = ("plan", "safe", "full")
+
+_HHMM_RE = re.compile(r"^([01]?\d|2[0-3]):[0-5]\d$")
 
 
 def state_dir() -> Path:
@@ -33,6 +39,15 @@ DEFAULTS = {
     # Model for queue items that don't specify one. Pro has no Opus in
     # Claude Code; sonnet stretches each 5h window across more items.
     "default_model": "sonnet",
+    # Effort passed to `claude --effort` (low|medium|high|xhigh|max).
+    # Claude Code's own default is xhigh; medium stretches quota further.
+    # Set to null to use the CLI default.
+    "default_effort": "medium",
+    # Run mode for items without --mode:
+    #   plan  -> read-only planning (--permission-mode plan)
+    #   safe  -> allowlisted edits/tests/commits, push blocked (default)
+    #   full  -> --dangerously-skip-permissions (use only for sandboxed dirs)
+    "default_run_mode": "safe",
     # Rolling 7-day budget of weighted tokens the bot may spend
     # (input + cache_creation + output + 0.1 * cache_read).
     "weekly_token_budget": 1_000_000,
@@ -108,6 +123,65 @@ def ensure_init() -> Path:
     if not path.exists():
         path.write_text(json.dumps(DEFAULTS, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def overrides() -> dict:
+    """The raw config file contents (no defaults merged in)."""
+    return read_json(config_path(), {})
+
+
+def parse_value(raw: str):
+    """CLI value -> typed value: JSON if it parses, plain string otherwise."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+
+
+def validate(key: str, value) -> str | None:
+    """Error message if (key, value) is not a valid setting, else None."""
+    if key not in DEFAULTS:
+        return f"unknown key '{key}' (known: {', '.join(sorted(DEFAULTS))})"
+    if key == "default_effort":
+        if value is not None and value not in EFFORT_LEVELS:
+            return f"default_effort must be one of {', '.join(EFFORT_LEVELS)} or null"
+    elif key == "default_run_mode":
+        if value not in RUN_MODES:
+            return f"default_run_mode must be one of {', '.join(RUN_MODES)}"
+    elif key in ("weekly_token_budget", "context_window_tokens", "item_timeout_minutes"):
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            return f"{key} must be a positive integer"
+    elif key == "context_rotate_pct":
+        if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 100:
+            return "context_rotate_pct must be an integer between 1 and 100"
+    elif key in ("quiet_hours_start", "quiet_hours_end"):
+        if not isinstance(value, str) or not _HHMM_RE.match(value):
+            return f"{key} must be HH:MM (24h), e.g. 00:30"
+    elif key in ("allowed_tools", "disallowed_tools"):
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            return f'{key} must be a JSON list of strings, e.g. \'["Read", "Edit"]\''
+    elif key in ("default_model", "claude_binary"):
+        if not isinstance(value, str) or not value.strip():
+            return f"{key} must be a non-empty string"
+    return None
+
+
+def set_value(key: str, value) -> None:
+    ensure_init()
+    data = overrides()
+    data[key] = value
+    write_json(config_path(), data)
+
+
+def unset_value(key: str) -> bool:
+    """Reset a key to its default. Returns True if it was overridden."""
+    ensure_init()
+    data = overrides()
+    if key not in data:
+        return False
+    del data[key]
+    write_json(config_path(), data)
+    return True
 
 
 def read_json(path: Path, default):
