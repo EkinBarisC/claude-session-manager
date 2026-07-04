@@ -14,7 +14,7 @@ EXAMPLES = """\
 examples:
   csm init                                    set up ~/.csm
   csm add "Fix the failing tests in src/"     queue a task in the current directory
-  csm add "Refactor auth" -C C:\\code\\app --effort high --mode plan
+  csm add "Refactor auth" -C ../other-project --effort high --mode plan
   csm list                                    pending and failed items
   csm run --max-items 1                       run one item now
   csm run --until 08:00                       run until 08:00
@@ -438,7 +438,7 @@ def _doctor() -> int:
           f"{', '.join(billing)} set in your shell - csm strips them from every run"
           if billing else "none set")
 
-    check(True, f"scheduled task '{schedule.TASK_NAME}'",
+    check(True, "nightly job",
           "registered" if schedule.exists() else "not registered (run `csm schedule`)")
 
     items = queuefile.load_items()

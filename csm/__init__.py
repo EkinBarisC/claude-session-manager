@@ -5,4 +5,4 @@ through Claude Code headless mode. Subscription auth only - never the
 pay-per-token API.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

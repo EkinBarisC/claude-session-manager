@@ -7,9 +7,10 @@ on:
 
 jobs:
   smoke-test:
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
         python-version: ["3.10", "3.13"]
     steps:
       - uses: actions/checkout@v4
@@ -21,7 +22,7 @@ jobs:
       - name: Smoke test (no claude binary needed)
         shell: pwsh
         env:
-          CSM_HOME: ${{ runner.temp }}\csm-home
+          CSM_HOME: ${{ runner.temp }}/csm-home
         run: |
           $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $true

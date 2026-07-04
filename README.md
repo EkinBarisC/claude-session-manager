@@ -2,8 +2,8 @@
 
 Spend leftover **Claude Pro subscription** quota automatically. You queue up
 tasks; `csm` runs them through **Claude Code headless mode** during your quiet
-hours (via Windows Task Scheduler) or whenever you say so — until the usage
-limit hits or its weekly budget is spent.
+hours (Task Scheduler on Windows, cron on macOS/Linux) or whenever you say so —
+until the usage limit hits or its weekly budget is spent.
 
 **No money is ever spent.** csm only uses your existing Pro subscription login.
 It strips every API-key / billing environment variable (`ANTHROPIC_API_KEY`,
@@ -13,7 +13,7 @@ billing. If the CLI isn't logged in, the run aborts instead of spending.
 
 ## Requirements
 
-- Windows, Python 3.10+
+- Windows, macOS, or Linux; Python 3.10+
 - [Claude Code](https://claude.com/claude-code) installed and **logged in with
   your Pro account** (run `claude` once, use `/login`, pick the subscription —
   not an API key / Console account)
@@ -68,8 +68,9 @@ csm config set weekly_token_budget 2000000
 csm config unset default_effort
 csm config edit          # open config.json in your editor
 
-# Register the nightly job (daily at quiet_hours_start, wakes the PC,
-# runs until quiet_hours_end). Needs an elevated/admin PowerShell.
+# Register the nightly job (daily at quiet_hours_start, runs until
+# quiet_hours_end). Windows: Task Scheduler with wake-to-run, needs an
+# elevated/admin PowerShell. macOS/Linux: a crontab entry.
 csm schedule
 csm schedule --remove
 
@@ -144,9 +145,11 @@ Edit via `csm config set/unset/edit`, or by hand (`csm config path`).
 
 ## Notes & caveats
 
-- **The PC must be awake.** `csm schedule` sets *wake-to-run*, but check
-  Windows power settings allow wake timers (Power Options → Sleep →
-  Allow wake timers).
+- **The machine must be awake.** On Windows, `csm schedule` sets *wake-to-run* —
+  check power settings allow wake timers (Power Options → Sleep → Allow wake
+  timers). cron does **not** wake a sleeping machine: on macOS set a wake alarm
+  (`sudo pmset repeat wakeorpoweron ...`) or keep the lid open; on Linux use
+  `rtcwake` or disable suspend for the night.
 - **5-hour windows start on first message.** A night run opens windows as it
   goes; a window opened at 5 AM lasts until 10 AM and shares quota with your
   morning work. (Accepted trade-off — csm does not protect your mornings.)
@@ -164,10 +167,12 @@ Issues and PRs welcome. To develop locally:
 git clone https://github.com/EkinBarisC/claude-session-manager
 cd claude-session-manager
 pip install -e .
-$env:CSM_HOME = "$env:TEMP\csm-dev"   # keep your real queue out of the way
+$env:CSM_HOME = "$env:TEMP\csm-dev"   # PowerShell; keeps your real queue out of the way
+# export CSM_HOME=/tmp/csm-dev        # bash/zsh equivalent
 ```
 
-CI runs a headless smoke test on Windows (no Claude login needed) — see
+CI runs a headless smoke test on Windows, Ubuntu, and macOS (no Claude login
+needed) — see
 [.github/workflows/ci.yml](.github/workflows/ci.yml). Releases are cut by
 pushing a `v*` tag, which builds the package and publishes a GitHub release.
 
