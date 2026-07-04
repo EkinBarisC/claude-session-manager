@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke-test:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: pip install .
+      - name: Smoke test (no claude binary needed)
+        shell: pwsh
+        env:
+          CSM_HOME: ${{ runner.temp }}\csm-home
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          csm --version
+          csm init
+          csm add "Smoke test task" --effort low --mode plan --priority 3
+          csm add "Second task"
+          csm list
+          csm config set default_effort high
+          if ((csm config get default_effort) -ne '"high"') { throw "config set/get mismatch" }
+          csm config unset default_effort
+          csm status
+          csm run --dry-run
+          csm clear --all
+          csm list
