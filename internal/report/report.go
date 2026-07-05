@@ -16,16 +16,22 @@ func AppendRunHeader(trigger string) {
 	appendText(fmt.Sprintf("\n## Run %s (%s)\n", time.Now().Format("2006-01-02 15:04"), trigger))
 }
 
-func AppendItem(item *queue.Item, status, sessionID, summary, errMsg string, weightedTokens, weeklySpend, budget int) {
+func AppendItem(item *queue.Item, status, sessionID, summary, errMsg string, weightedTokens, weeklySpend, budget int, logPath string) {
 	lines := []string{
 		fmt.Sprintf("### [%s] %s - %s", status, item.ID, Short(item.Prompt, 80)),
 		fmt.Sprintf("- project: `%s`", item.Project),
+	}
+	if item.Branch != "" {
+		lines = append(lines, fmt.Sprintf("- branch: `%s`", item.Branch))
 	}
 	if sessionID != "" {
 		lines = append(lines, fmt.Sprintf("- session: `%s` (resume with `claude -r %s`)", sessionID, sessionID))
 	}
 	if summary != "" {
 		lines = append(lines, "- summary: "+summary)
+	}
+	if logPath != "" {
+		lines = append(lines, fmt.Sprintf("- transcript: `%s`", logPath))
 	}
 	if errMsg != "" {
 		lines = append(lines, "- error: "+errMsg)

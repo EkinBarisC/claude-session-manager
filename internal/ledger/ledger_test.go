@@ -8,16 +8,18 @@ import (
 )
 
 func TestWeighted(t *testing.T) {
-	usage := map[string]int{
-		"input_tokens":                100,
-		"cache_creation_input_tokens": 200,
-		"output_tokens":               300,
-		"cache_read_input_tokens":     1000,
+	// values are float64 because that is how encoding/json decodes numbers
+	usage := map[string]any{
+		"input_tokens":                float64(100),
+		"cache_creation_input_tokens": float64(200),
+		"output_tokens":               float64(300),
+		"cache_read_input_tokens":     float64(1000),
+		"service_tier":                "standard", // non-numeric fields ride along
 	}
 	if got := Weighted(usage); got != 700 {
 		t.Errorf("want 700 (100+200+300+0.1*1000), got %d", got)
 	}
-	if got := Weighted(map[string]int{}); got != 0 {
+	if got := Weighted(map[string]any{}); got != 0 {
 		t.Errorf("empty usage should weigh 0, got %d", got)
 	}
 }

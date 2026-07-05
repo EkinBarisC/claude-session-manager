@@ -19,7 +19,7 @@ type Record struct {
 	ItemID   string         `json:"item_id"`
 	Project  string         `json:"project"`
 	Model    string         `json:"model"`
-	Usage    map[string]int `json:"usage"`
+	Usage    map[string]any `json:"usage"`
 	Weighted int            `json:"weighted"`
 }
 
@@ -29,15 +29,21 @@ func Load() []Record {
 	return records
 }
 
-func Weighted(usage map[string]int) int {
-	return int(math.Round(
-		float64(usage["input_tokens"]) +
-			float64(usage["cache_creation_input_tokens"]) +
-			float64(usage["output_tokens"]) +
-			0.1*float64(usage["cache_read_input_tokens"])))
+// num reads a numeric usage field; JSON numbers decode as float64.
+func num(usage map[string]any, key string) float64 {
+	f, _ := usage[key].(float64)
+	return f
 }
 
-func Append(itemID, project, model string, usage map[string]int) error {
+func Weighted(usage map[string]any) int {
+	return int(math.Round(
+		num(usage, "input_tokens") +
+			num(usage, "cache_creation_input_tokens") +
+			num(usage, "output_tokens") +
+			0.1*num(usage, "cache_read_input_tokens")))
+}
+
+func Append(itemID, project, model string, usage map[string]any) error {
 	records := append(Load(), Record{
 		TS:       time.Now().UTC().Format("2006-01-02T15:04:05+00:00"),
 		ItemID:   itemID,

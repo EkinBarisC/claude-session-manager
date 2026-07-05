@@ -3,10 +3,10 @@
 package tui
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -70,6 +70,7 @@ type model struct {
 	height   int
 	running  string // item id currently running, "" if idle
 	extRun   *runstate.Lock
+	limits   []claude.Limit // real plan usage, fetched async
 	flash    string
 	detailID string
 	ready    bool
@@ -108,8 +109,24 @@ func Run() error {
 	return err
 }
 
+type usageMsg struct {
+	limits []claude.Limit
+}
+
+// fetchUsageCmd queries real plan usage in the background (free: /usage
+// spends no tokens) so the status bar can show actual limit pressure.
+func fetchUsageCmd(cfg config.Config) tea.Cmd {
+	return func() tea.Msg {
+		limits, _, err := claude.FetchUsage(cfg)
+		if err != nil {
+			return usageMsg{}
+		}
+		return usageMsg{limits: limits}
+	}
+}
+
 func (m *model) Init() tea.Cmd {
-	return m.spinner.Tick
+	return tea.Batch(m.spinner.Tick, fetchUsageCmd(m.cfg))
 }
 
 func (m *model) reload() {
@@ -239,6 +256,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 
+	case usageMsg:
+		m.limits = msg.limits
+		return m, nil
+
 	case claudeDoneMsg:
 		m.reload()
 		if msg.err != nil {
@@ -246,7 +267,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.flash = fmt.Sprintf("[%s] session closed - press r to requeue if resolved", msg.id)
 		}
-		return m, nil
+		return m, fetchUsageCmd(m.cfg)
 
 	case runDoneMsg:
 		m.running = ""
@@ -259,7 +280,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			m.flash = fmt.Sprintf("[%s] needs attention: %s", msg.id, msg.result.Error)
 		}
-		return m, nil
+		return m, fetchUsageCmd(m.cfg)
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -314,7 +335,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "u":
 		m.reload()
 		m.flash = "refreshed"
-		return m, nil
+		return m, fetchUsageCmd(m.cfg)
 	}
 
 	switch m.tab {
@@ -535,7 +556,24 @@ func (m *model) statusView() string {
 	} else if pct >= 60 {
 		budgetS = budgetS.Foreground(warnColor)
 	}
-	status := budgetS.Render(fmt.Sprintf("week %d/%d (%d%%)", spend, m.cfg.WeeklyTokenBudget, pct))
+	status := budgetS.Render(fmt.Sprintf("bot week %d/%d (%d%%)", spend, m.cfg.WeeklyTokenBudget, pct))
+	for _, l := range m.limits {
+		label := l.Scope
+		if label == "session" {
+			label = "5h"
+		} else if strings.HasPrefix(label, "week (all") {
+			label = "wk"
+		} else {
+			continue // per-model week lines stay in `csm usage`
+		}
+		limitS := lipgloss.NewStyle().Foreground(okColor)
+		if l.Pct >= 90 {
+			limitS = limitS.Foreground(errColor)
+		} else if l.Pct >= 60 {
+			limitS = limitS.Foreground(warnColor)
+		}
+		status += "  " + limitS.Render(fmt.Sprintf("%s %d%%", label, l.Pct))
+	}
 	if m.running != "" {
 		status += "  " + m.spinner.View() + fmt.Sprintf("running [%s]...", m.running)
 	}
@@ -598,12 +636,16 @@ func (m *model) detailView() string {
 	}
 	tokens := ""
 	if len(item.Tokens) > 0 {
-		raw, _ := json.Marshal(item.Tokens)
-		tokens = string(raw)
+		tokens = fmt.Sprintf("%d weighted (in %d, out %d, cache-read %d)",
+			ledger.Weighted(item.Tokens),
+			claude.UsageInt(item.Tokens, "input_tokens"),
+			claude.UsageInt(item.Tokens, "output_tokens"),
+			claude.UsageInt(item.Tokens, "cache_read_input_tokens"))
 	}
 	out := row("id", item.ID) +
 		row("status", item.Status) +
 		row("project", item.Project) +
+		row("branch", item.Branch) +
 		row("model", mdl) +
 		row("effort", eff) +
 		row("mode", md) +
@@ -614,8 +656,18 @@ func (m *model) detailView() string {
 		row("summary", item.Summary) +
 		row("error", item.Error) +
 		row("tokens", tokens) +
+		row("transcript", transcriptPath(item.ID)) +
 		"\n" + detailKeyS.Render("prompt") + "\n" + wordwrap(item.Prompt, max(20, m.width-4))
 	return lipgloss.NewStyle().Padding(0, 1).Render(out)
+}
+
+// transcriptPath returns the saved run transcript for an item, or "".
+func transcriptPath(itemID string) string {
+	path := filepath.Join(config.LogsDir(), itemID+".md")
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+	return path
 }
 
 func wordwrap(text string, width int) string {

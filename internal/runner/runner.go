@@ -4,6 +4,7 @@ package runner
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -105,6 +106,13 @@ func Run(untilHHMM string, maxItems int, dryRun bool, itemID string) int {
 			runstate.WriteLastRun(startedAt, trigger, ran, outcome)
 		}()
 		report.AppendRunHeader(trigger)
+		// real plan usage (free to query) so the report shows what the
+		// night started from
+		if limits, _, err := claude.FetchUsage(cfg); err == nil && len(limits) > 0 {
+			line := claude.FormatLimits(limits)
+			fmt.Println("csm: plan usage: " + line)
+			report.AppendNote("plan usage at start: " + line)
+		}
 	}
 
 	for _, item := range todo {
@@ -259,7 +267,34 @@ func RecordOutcome(cfg config.Config, items []*queue.Item, item *queue.Item,
 	if !result.OK {
 		status = queue.NeedsAttention
 	}
-	queue.Finish(items, item, status, result.SessionID, result.Summary, result.Error, result.Usage)
+	queue.Finish(items, item, status, result.SessionID, result.Branch,
+		result.Summary, result.Error, result.Usage)
+	logPath := writeTranscript(item, result)
 	report.AppendItem(item, status, result.SessionID, result.Summary, result.Error,
-		weighted, spend, cfg.WeeklyTokenBudget)
+		weighted, spend, cfg.WeeklyTokenBudget, logPath)
+}
+
+// writeTranscript saves the run's full result text so failures can be
+// diagnosed without resuming the session. Returns the file path, or ""
+// when there was nothing to save.
+func writeTranscript(item *queue.Item, result claude.Result) string {
+	if strings.TrimSpace(result.ResultText) == "" {
+		return ""
+	}
+	if err := os.MkdirAll(config.LogsDir(), 0o755); err != nil {
+		return ""
+	}
+	path := filepath.Join(config.LogsDir(), item.ID+".md")
+	header := fmt.Sprintf("# csm transcript [%s]\n\n- project: %s\n- finished: %s\n",
+		item.ID, item.Project, item.FinishedAt)
+	if item.Branch != "" {
+		header += "- branch: " + item.Branch + "\n"
+	}
+	if result.Error != "" {
+		header += "- error: " + result.Error + "\n"
+	}
+	if err := os.WriteFile(path, []byte(header+"\n---\n\n"+result.ResultText+"\n"), 0o644); err != nil {
+		return ""
+	}
+	return path
 }

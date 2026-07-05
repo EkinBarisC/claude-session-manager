@@ -102,6 +102,7 @@ func LedgerPath() string   { return filepath.Join(StateDir(), "ledger.json") }
 func ReportPath() string   { return filepath.Join(StateDir(), "report.md") }
 func LockPath() string     { return filepath.Join(StateDir(), "run.lock") }
 func LastRunPath() string  { return filepath.Join(StateDir(), "lastrun.json") }
+func LogsDir() string      { return filepath.Join(StateDir(), "logs") }
 
 // Load returns defaults overlaid with whatever the config file sets.
 func Load() (Config, error) {

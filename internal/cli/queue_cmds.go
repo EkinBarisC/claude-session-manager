@@ -1,9 +1,9 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -11,6 +11,7 @@ import (
 
 	"github.com/EkinBarisC/claude-session-manager/internal/claude"
 	"github.com/EkinBarisC/claude-session-manager/internal/config"
+	"github.com/EkinBarisC/claude-session-manager/internal/ledger"
 	"github.com/EkinBarisC/claude-session-manager/internal/queue"
 	"github.com/EkinBarisC/claude-session-manager/internal/report"
 )
@@ -169,6 +170,9 @@ func newShowCmd() *cobra.Command {
 			fmt.Printf("id:        %s\n", item.ID)
 			fmt.Printf("status:    %s\n", item.Status)
 			fmt.Printf("project:   %s\n", item.Project)
+			if item.Branch != "" {
+				fmt.Printf("branch:    %s\n", item.Branch)
+			}
 			fmt.Printf("model:     %s%s\n", model, fromConfig(item.Model))
 			fmt.Printf("effort:    %s%s\n", effort, fromConfig(item.Effort))
 			fmt.Printf("mode:      %s%s\n", mode, fromConfig(item.Mode))
@@ -187,8 +191,15 @@ func newShowCmd() *cobra.Command {
 				fmt.Printf("error:     %s\n", item.Error)
 			}
 			if len(item.Tokens) > 0 {
-				raw, _ := json.Marshal(item.Tokens)
-				fmt.Printf("tokens:    %s\n", raw)
+				fmt.Printf("tokens:    %d weighted (in %d, out %d, cache-read %d)\n",
+					ledger.Weighted(item.Tokens),
+					claude.UsageInt(item.Tokens, "input_tokens"),
+					claude.UsageInt(item.Tokens, "output_tokens"),
+					claude.UsageInt(item.Tokens, "cache_read_input_tokens"))
+			}
+			logPath := filepath.Join(config.LogsDir(), item.ID+".md")
+			if _, err := os.Stat(logPath); err == nil {
+				fmt.Printf("transcript: %s\n", logPath)
 			}
 			fmt.Printf("prompt:\n%s\n", item.Prompt)
 			return nil
