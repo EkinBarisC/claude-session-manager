@@ -41,8 +41,9 @@ csm doctor               # verifies claude login, config, and the nightly job
 Run `csm` with no arguments (or `csm tui`) for the interactive UI:
 
 - **Queue tab** — browse items; `n` queue a new task (the prompt is a
-  word-wrapping multi-line editor, and the project field tab-completes
-  directories), `e` edit the selected item, `enter` full detail,
+  word-wrapping multi-line editor, prompts that invoke a slash command or
+  skill are tinted cyan the moment they're recognized, and the project field
+  tab-completes directories), `e` edit the selected item, `enter` full detail,
   `R` run the selected item (live spinner, result lands in the table),
   `c` open the item's Claude Code session interactively — the TUI steps aside,
   you answer whatever the run got stuck on in `claude -r`, and you're back in
@@ -71,6 +72,13 @@ csm add "Review src/auth, write findings to REVIEW.md" -C ../myapp --priority 5
 # Per-item model, effort, and run mode (fall back to config defaults)
 csm add "Plan the v2 schema migration" --mode plan --effort high
 csm add "Bulk-rename fixtures" -m haiku --effort low
+
+# Slash commands and skills work too - prompts starting with /command run
+# your Claude Code commands/skills verbatim (csm's protocol footer is
+# skipped so their arguments stay clean). The skill must be available in
+# the target project or your user scope.
+csm add "/learn go build tags" -C ../scratch
+csm add "/code-review" -C ../myapp --mode plan
 
 # Inspect and manage the queue
 csm status               # overview: queue, weekly spend, sessions, last run

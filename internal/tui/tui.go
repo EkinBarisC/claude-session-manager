@@ -49,6 +49,7 @@ var (
 	okColor    = lipgloss.AdaptiveColor{Light: "#059669", Dark: "#34D399"}
 	warnColor  = lipgloss.AdaptiveColor{Light: "#D97706", Dark: "#FBBF24"}
 	errColor   = lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#F87171"}
+	slashColor = lipgloss.AdaptiveColor{Light: "#0891B2", Dark: "#67E8F9"} // slash commands/skills
 	tabStyle   = lipgloss.NewStyle().Padding(0, 2).Foreground(subtle)
 	activeTabS = lipgloss.NewStyle().Padding(0, 2).Bold(true).Foreground(accent).Underline(true)
 	statusBarS = lipgloss.NewStyle().Foreground(subtle)
@@ -657,8 +658,20 @@ func (m *model) detailView() string {
 		row("error", item.Error) +
 		row("tokens", tokens) +
 		row("transcript", transcriptPath(item.ID)) +
-		"\n" + detailKeyS.Render("prompt") + "\n" + wordwrap(item.Prompt, max(20, m.width-4))
+		"\n" + detailKeyS.Render("prompt") + "\n" + renderPrompt(item.Prompt, max(20, m.width-4))
 	return lipgloss.NewStyle().Padding(0, 1).Render(out)
+}
+
+// renderPrompt word-wraps a prompt; when it invokes a slash command/skill
+// the command token is highlighted so it reads as such.
+func renderPrompt(prompt string, width int) string {
+	wrapped := wordwrap(prompt, width)
+	if !claude.IsSlashPrompt(prompt) {
+		return wrapped
+	}
+	token := strings.Fields(prompt)[0]
+	styled := lipgloss.NewStyle().Foreground(slashColor).Bold(true).Render(token)
+	return strings.Replace(wrapped, token, styled, 1)
 }
 
 // transcriptPath returns the saved run transcript for an item, or "".

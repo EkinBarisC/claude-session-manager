@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/EkinBarisC/claude-session-manager/internal/claude"
 	"github.com/EkinBarisC/claude-session-manager/internal/config"
 	"github.com/EkinBarisC/claude-session-manager/internal/queue"
 )
@@ -260,6 +261,7 @@ var (
 	formTitleS = lipgloss.NewStyle().Bold(true).Foreground(accent).Padding(0, 1)
 	formLabelS = lipgloss.NewStyle().Foreground(subtle)
 	formErrS   = lipgloss.NewStyle().Foreground(errColor).Padding(0, 1)
+	slashS     = lipgloss.NewStyle().Foreground(slashColor)
 )
 
 func (f *form) view(width int) string {
@@ -268,9 +270,21 @@ func (f *form) view(width int) string {
 		title = "Edit [" + f.editID + "]"
 	}
 	f.prompt.SetWidth(min(90, max(30, width-4)))
+	// a slash prompt runs a Claude Code command/skill; tint the whole
+	// textarea so it is obvious csm recognized it as one
+	isSlash := claude.IsSlashPrompt(f.prompt.Value())
+	textStyle := lipgloss.NewStyle()
+	if isSlash {
+		textStyle = textStyle.Foreground(slashColor)
+	}
+	f.prompt.FocusedStyle.Text = textStyle
+	f.prompt.BlurredStyle.Text = textStyle
 	var b strings.Builder
 	b.WriteString(formTitleS.Render(title) + "\n\n")
 	b.WriteString(" " + formLabelS.Render(formLabels[fieldPrompt]) + "\n" + f.prompt.View() + "\n")
+	if isSlash {
+		b.WriteString(" " + slashS.Render("slash command/skill - runs as-is (csm's protocol footer is skipped)") + "\n")
+	}
 	for i := fieldProject; i < fieldCount; i++ {
 		b.WriteString(" " + formLabelS.Render(formLabels[i]) + "\n " + f.inputs[i].View() + "\n")
 	}

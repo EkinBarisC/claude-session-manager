@@ -52,6 +52,19 @@ Automated run rules (csm):
    SUMMARY: <one sentence result>
 `
 
+// Slash-command shape: "/word" (letters, digits, :, -) followed by a space
+// or end. Paths like /tmp/x.sh don't match.
+var slashPromptRe = regexp.MustCompile(`^/[A-Za-z][\w:-]*(\s|$)`)
+
+// IsSlashPrompt reports whether the prompt invokes a Claude Code slash
+// command or skill (e.g. "/learn go build tags", "/usage"). Print mode runs
+// these like the interactive REPL does, but only if the prompt is passed
+// verbatim - appending the csm protocol footer would pollute the command's
+// arguments, so BuildCommand skips it for these.
+func IsSlashPrompt(prompt string) bool {
+	return slashPromptRe.MatchString(strings.TrimSpace(prompt))
+}
+
 var (
 	rateLimitRe = regexp.MustCompile(`(?i)usage limit|rate limit|limit reached|limit will reset|out of extra usage`)
 	authErrorRe = regexp.MustCompile(`(?i)/login|not logged in|invalid api key|api key not found|oauth token|authentication_error|please log in`)
@@ -161,8 +174,12 @@ func BuildCommand(cfg config.Config, item *queue.Item, resumeID string) ([]strin
 	if resumeID != "" {
 		cmd = append(cmd, "--resume", resumeID)
 	}
+	prompt := item.Prompt
+	if !IsSlashPrompt(prompt) {
+		prompt += Protocol
+	}
 	cmd = append(cmd,
-		"-p", item.Prompt+Protocol,
+		"-p", prompt,
 		"--output-format", "json",
 		"--model", model,
 	)

@@ -144,6 +144,49 @@ func TestExtractSummary(t *testing.T) {
 	}
 }
 
+func TestIsSlashPrompt(t *testing.T) {
+	yes := []string{"/learn go build tags", "/usage", "  /btw whats up",
+		"/anthropic-skills:learn topic", "/code-review --fix"}
+	for _, p := range yes {
+		if !IsSlashPrompt(p) {
+			t.Errorf("%q should be a slash prompt", p)
+		}
+	}
+	no := []string{"fix the bug", "/tmp/build.sh review this", "1/2 done",
+		"", "// a comment", "/ spaced slash"}
+	for _, p := range no {
+		if IsSlashPrompt(p) {
+			t.Errorf("%q should NOT be a slash prompt", p)
+		}
+	}
+}
+
+func TestBuildCommandSlashPromptSkipsProtocol(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.ClaudeBinary = "go"
+
+	promptArg := func(prompt string) string {
+		argv, err := BuildCommand(cfg, &queue.Item{Prompt: prompt, Project: "."}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, a := range argv {
+			if a == "-p" {
+				return argv[i+1]
+			}
+		}
+		t.Fatal("no -p flag")
+		return ""
+	}
+
+	if got := promptArg("/learn go interfaces"); got != "/learn go interfaces" {
+		t.Errorf("slash prompt must run verbatim, got %q", got)
+	}
+	if got := promptArg("fix the tests"); !strings.Contains(got, "SUMMARY:") {
+		t.Errorf("normal prompt must carry the protocol, got %q", got)
+	}
+}
+
 func TestBuildCommandModes(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.ClaudeBinary = "go" // any binary that exists on PATH in CI
