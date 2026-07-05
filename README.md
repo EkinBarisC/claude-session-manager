@@ -52,7 +52,8 @@ Run `csm` with no arguments (or `csm tui`) for the interactive UI:
 - **Config tab** — edit settings in place: pick a key, `enter` to change the
   value (validated before saving), `d` to reset it to its default. Values are
   syntax-highlighted JSON.
-- Status bar shows rolling weekly spend against the budget, color-coded.
+- Status bar shows rolling weekly spend against the budget, color-coded, and
+  warns when a scheduled or manual run is executing outside the TUI.
 - `ctrl+z` suspends the TUI on macOS/Linux (`fg` brings it back).
 
 ## CLI usage
@@ -148,6 +149,13 @@ csm report
    with `claude -r <session-id>` or `csm requeue <id>`. No auto-retries.
 7. **Report** — `~/.csm/report.md` gets one block per item: status, project,
    session id, one-line summary, and token spend vs budget.
+8. **Visibility & locking** — while an item runs, `csm run` shows a live
+   elapsed-time heartbeat (a redrawn line on a terminal, a once-a-minute line
+   in the cron log). Every run holds `~/.csm/run.lock` while active and writes
+   `~/.csm/lastrun.json` when it stops, so `csm status` shows any run in
+   progress plus the last run's outcome, `csm doctor` fails when the nightly
+   job is registered but hasn't run in 48h (the silent-failure detector), and
+   a scheduled run and a manual run can never mutate the queue concurrently.
 
 ## Configuration — `~/.csm/config.json`
 
