@@ -24,7 +24,9 @@ jobs:
       - name: Test
         run: go test ./...
       - name: Build
-        run: go build -o csm-bin ./cmd/csm
+        # .exe suffix everywhere: Windows needs it to execute the file,
+        # unix doesn't care
+        run: go build -o csm-bin.exe ./cmd/csm
       - name: Smoke test (no claude binary needed)
         shell: pwsh
         env:
@@ -32,15 +34,15 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $true
-          ./csm-bin --version
-          ./csm-bin init
-          ./csm-bin add "Smoke test task" --effort low --mode plan --priority 3
-          ./csm-bin add "Second task"
-          ./csm-bin list
-          ./csm-bin config set default_effort high
-          if ((./csm-bin config get default_effort) -ne '"high"') { throw "config set/get mismatch" }
-          ./csm-bin config unset default_effort
-          ./csm-bin status
-          ./csm-bin run --dry-run
-          ./csm-bin clear --all
-          ./csm-bin list
+          ./csm-bin.exe --version
+          ./csm-bin.exe init
+          ./csm-bin.exe add "Smoke test task" --effort low --mode plan --priority 3
+          ./csm-bin.exe add "Second task"
+          ./csm-bin.exe list
+          ./csm-bin.exe config set default_effort high
+          if ((./csm-bin.exe config get default_effort) -ne '"high"') { throw "config set/get mismatch" }
+          ./csm-bin.exe config unset default_effort
+          ./csm-bin.exe status
+          ./csm-bin.exe run --dry-run
+          ./csm-bin.exe clear --all
+          ./csm-bin.exe list
