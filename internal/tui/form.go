@@ -36,6 +36,7 @@ type form struct {
 	focus  int
 	errMsg string
 	hint   string
+	editID string // "" = adding a new item
 }
 
 func newForm() *form {
@@ -52,6 +53,19 @@ func newForm() *form {
 	f.inputs[fieldMode].Placeholder = strings.Join(config.RunModes, "|")
 	f.inputs[fieldPriority].SetValue("0")
 	f.inputs[fieldPrompt].Focus()
+	return f
+}
+
+func newEditForm(item *queue.Item) *form {
+	f := newForm()
+	f.editID = item.ID
+	f.inputs[fieldPrompt].SetValue(item.Prompt)
+	f.inputs[fieldProject].SetValue(item.Project)
+	f.inputs[fieldModel].SetValue(item.Model)
+	f.inputs[fieldEffort].SetValue(item.Effort)
+	f.inputs[fieldMode].SetValue(item.Mode)
+	f.inputs[fieldPriority].SetValue(strconv.Itoa(item.Priority))
+	f.inputs[fieldPrompt].CursorEnd()
 	return f
 }
 
@@ -183,8 +197,28 @@ func (f *form) submit() (string, error) {
 		}
 		priority = n
 	}
-	item, err := queue.Add(prompt, project,
-		strings.TrimSpace(f.inputs[fieldModel].Value()), effort, mode, priority, false)
+	model := strings.TrimSpace(f.inputs[fieldModel].Value())
+
+	if f.editID != "" {
+		items := queue.Load()
+		item, err := queue.Find(items, f.editID)
+		if err != nil {
+			return "", err
+		}
+		abs, err := filepath.Abs(project)
+		if err != nil {
+			return "", err
+		}
+		item.Prompt = prompt
+		item.Project = abs
+		item.Model = model
+		item.Effort = effort
+		item.Mode = mode
+		item.Priority = priority
+		return item.ID, queue.Save(items)
+	}
+
+	item, err := queue.Add(prompt, project, model, effort, mode, priority, false)
 	if err != nil {
 		return "", err
 	}
@@ -198,8 +232,12 @@ var (
 )
 
 func (f *form) view(width int) string {
+	title := "New task"
+	if f.editID != "" {
+		title = "Edit [" + f.editID + "]"
+	}
 	var b strings.Builder
-	b.WriteString(formTitleS.Render("New task") + "\n\n")
+	b.WriteString(formTitleS.Render(title) + "\n\n")
 	for i, in := range f.inputs {
 		b.WriteString(" " + formLabelS.Render(formLabels[i]) + "\n " + in.View() + "\n")
 	}

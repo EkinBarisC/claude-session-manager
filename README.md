@@ -40,12 +40,19 @@ csm doctor               # verifies claude login, config, and the nightly job
 
 Run `csm` with no arguments (or `csm tui`) for the interactive UI:
 
-- **Queue tab** — browse items; `n` queue a new task, `enter` full detail,
+- **Queue tab** — browse items; `n` queue a new task (the project field
+  tab-completes directories), `e` edit the selected item, `enter` full detail,
   `R` run the selected item (live spinner, result lands in the table),
-  `r` requeue, `d` delete (with confirm), `u` refresh.
-- **Report tab** — scroll the run report.
-- **Config tab** — view the effective config.
+  `c` open the item's Claude Code session interactively — the TUI steps aside,
+  you answer whatever the run got stuck on in `claude -r`, and you're back in
+  the TUI when you exit — `r` requeue, `d` delete (with confirm), `u` refresh.
+- **Report tab** — scroll the run report, with colorized run headers and
+  status badges.
+- **Config tab** — edit settings in place: pick a key, `enter` to change the
+  value (validated before saving), `d` to reset it to its default. Values are
+  syntax-highlighted JSON.
 - Status bar shows rolling weekly spend against the budget, color-coded.
+- `ctrl+z` suspends the TUI on macOS/Linux (`fg` brings it back).
 
 ## CLI usage
 

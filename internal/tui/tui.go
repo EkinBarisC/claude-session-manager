@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -61,7 +63,6 @@ type model struct {
 	mode     mode
 	table    table.Model
 	report   viewport.Model
-	configVP viewport.Model
 	form     *form
 	spinner  spinner.Model
 	width    int
@@ -70,11 +71,22 @@ type model struct {
 	flash    string
 	detailID string
 	ready    bool
+
+	// config tab state
+	cfgCursor  int
+	cfgEditing bool
+	cfgInput   textinput.Model
+	cfgErr     string
 }
 
 type runDoneMsg struct {
 	id     string
 	result claude.Result
+}
+
+type claudeDoneMsg struct {
+	id  string
+	err error
 }
 
 type refreshMsg struct{}
@@ -107,7 +119,6 @@ func (m *model) reload() {
 	}
 	m.rebuildTable()
 	m.setReportContent()
-	m.setConfigContent()
 }
 
 func (m *model) rebuildTable() {
@@ -210,21 +221,12 @@ func (m *model) setReportContent() {
 	m.report = vp
 }
 
-func (m *model) setConfigContent() {
-	raw, _ := json.MarshalIndent(m.cfg, "", "  ")
-	vp := viewport.New(max(20, m.width-2), max(3, m.height-5))
-	vp.SetContent(highlightJSON(fmt.Sprintf("# %s\n# edit with `csm config set <key> <value>`\n\n%s",
-		config.ConfigPath(), raw)))
-	m.configVP = vp
-}
-
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.rebuildTable()
 		m.setReportContent()
-		m.setConfigContent()
 		return m, nil
 
 	case spinner.TickMsg:
@@ -234,6 +236,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case refreshMsg:
 		m.reload()
+		return m, nil
+
+	case claudeDoneMsg:
+		m.reload()
+		if msg.err != nil {
+			m.flash = fmt.Sprintf("claude session exited: %v", msg.err)
+		} else {
+			m.flash = fmt.Sprintf("[%s] session closed - press r to requeue if resolved", msg.id)
+		}
 		return m, nil
 
 	case runDoneMsg:
@@ -276,10 +287,17 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	// a config value being edited owns every key (q, 1-3, etc. are text)
+	if m.tab == tabConfig && m.cfgEditing {
+		return m.handleConfigEditKey(msg)
+	}
 
 	switch key {
 	case "ctrl+c", "q":
 		return m, tea.Quit
+	case "ctrl+z":
+		// unix job control: fg brings the TUI back. No-op on Windows.
+		return m, tea.Suspend
 	case "tab":
 		m.tab = (m.tab + 1) % 3
 		return m, nil
@@ -304,9 +322,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.report, cmd = m.report.Update(msg)
 		return m, cmd
 	case tabConfig:
-		var cmd tea.Cmd
-		m.configVP, cmd = m.configVP.Update(msg)
-		return m, cmd
+		return m.handleConfigKey(msg)
 	}
 
 	// queue tab
@@ -319,6 +335,13 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if it := m.selected(); it != nil {
 			m.detailID = it.ID
 			m.mode = modeDetail
+		}
+		return m, nil
+	case "e":
+		if it := m.selected(); it != nil {
+			m.form = newEditForm(it)
+			m.mode = modeForm
+			return m, m.form.focusCmd()
 		}
 		return m, nil
 	case "d":
@@ -337,6 +360,8 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "R":
 		return m.startRun()
+	case "c":
+		return m.openClaudeSession()
 	}
 
 	var cmd tea.Cmd
@@ -345,12 +370,17 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	editing := m.form.editID != ""
 	done, added, cmd := m.form.update(msg)
 	if done {
 		m.mode = modeTable
 		if added != "" {
 			m.reload()
-			m.flash = fmt.Sprintf("queued [%s]", added)
+			if editing {
+				m.flash = fmt.Sprintf("updated [%s]", added)
+			} else {
+				m.flash = fmt.Sprintf("queued [%s]", added)
+			}
 		}
 	}
 	return m, cmd
@@ -370,6 +400,37 @@ func (m *model) deleteSelected() {
 	queue.Save(remaining)
 	m.reload()
 	m.flash = fmt.Sprintf("removed [%s]", it.ID)
+}
+
+// openClaudeSession suspends the TUI and resumes the selected item's Claude
+// Code session interactively (`claude -r`) in the item's project directory,
+// so a needs_attention question can be answered in place. The billing env
+// vars are stripped just like headless runs.
+func (m *model) openClaudeSession() (tea.Model, tea.Cmd) {
+	if m.running != "" {
+		m.flash = "a run is in progress - wait for it to finish first"
+		return m, nil
+	}
+	it := m.selected()
+	if it == nil {
+		return m, nil
+	}
+	if it.SessionID == "" {
+		m.flash = fmt.Sprintf("[%s] has no recorded session to resume", it.ID)
+		return m, nil
+	}
+	binary, err := exec.LookPath(m.cfg.ClaudeBinary)
+	if err != nil {
+		m.flash = fmt.Sprintf("'%s' not found on PATH", m.cfg.ClaudeBinary)
+		return m, nil
+	}
+	cmd := exec.Command(binary, "-r", it.SessionID)
+	cmd.Dir = it.Project
+	cmd.Env, _ = claude.StrippedEnv(os.Environ())
+	id := it.ID
+	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return claudeDoneMsg{id: id, err: err}
+	})
 }
 
 func (m *model) startRun() (tea.Model, tea.Cmd) {
@@ -431,7 +492,7 @@ func (m *model) View() string {
 		case tabReport:
 			body = m.report.View()
 		case tabConfig:
-			body = m.configVP.View()
+			body = m.configView()
 		default:
 			body = m.table.View()
 		}
@@ -490,7 +551,13 @@ func (m *model) helpView() string {
 	default:
 		switch m.tab {
 		case tabQueue:
-			help = "n new - enter detail - R run - r requeue - d delete - u refresh - tab switch - q quit"
+			help = "n new - e edit - enter detail - R run - c claude session - r requeue - d delete - u refresh - tab switch - q quit"
+		case tabConfig:
+			if m.cfgEditing {
+				help = "enter save - esc cancel"
+			} else {
+				help = "up/down select - enter edit - d reset to default - tab switch - q quit"
+			}
 		default:
 			help = "up/down scroll - tab switch - q quit"
 		}
