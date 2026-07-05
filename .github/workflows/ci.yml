@@ -6,19 +6,25 @@ on:
   pull_request:
 
 jobs:
-  smoke-test:
+  test:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
-        python-version: ["3.10", "3.13"]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install
-        run: pip install .
+          go-version-file: go.mod
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: test -z "$(gofmt -l .)"
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+      - name: Build
+        run: go build -o csm-bin ./cmd/csm
       - name: Smoke test (no claude binary needed)
         shell: pwsh
         env:
@@ -26,15 +32,15 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $true
-          csm --version
-          csm init
-          csm add "Smoke test task" --effort low --mode plan --priority 3
-          csm add "Second task"
-          csm list
-          csm config set default_effort high
-          if ((csm config get default_effort) -ne '"high"') { throw "config set/get mismatch" }
-          csm config unset default_effort
-          csm status
-          csm run --dry-run
-          csm clear --all
-          csm list
+          ./csm-bin --version
+          ./csm-bin init
+          ./csm-bin add "Smoke test task" --effort low --mode plan --priority 3
+          ./csm-bin add "Second task"
+          ./csm-bin list
+          ./csm-bin config set default_effort high
+          if ((./csm-bin config get default_effort) -ne '"high"') { throw "config set/get mismatch" }
+          ./csm-bin config unset default_effort
+          ./csm-bin status
+          ./csm-bin run --dry-run
+          ./csm-bin clear --all
+          ./csm-bin list

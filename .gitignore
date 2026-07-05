@@ -1,6 +1,3 @@
-__pycache__/
-*.pyc
-*.egg-info/
-build/
+csm
+csm.exe
 dist/
-.venv/

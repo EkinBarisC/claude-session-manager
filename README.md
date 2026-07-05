@@ -3,7 +3,8 @@
 Spend leftover **Claude Pro subscription** quota automatically. You queue up
 tasks; `csm` runs them through **Claude Code headless mode** during your quiet
 hours (Task Scheduler on Windows, cron on macOS/Linux) or whenever you say so —
-until the usage limit hits or its weekly budget is spent.
+until the usage limit hits or its weekly budget is spent. A single static Go
+binary with both a CLI and an interactive TUI.
 
 **No money is ever spent.** csm only uses your existing Pro subscription login.
 It strips every API-key / billing environment variable (`ANTHROPIC_API_KEY`,
@@ -13,34 +14,48 @@ billing. If the CLI isn't logged in, the run aborts instead of spending.
 
 ## Requirements
 
-- Windows, macOS, or Linux; Python 3.10+
+- Windows, macOS, or Linux
 - [Claude Code](https://claude.com/claude-code) installed and **logged in with
   your Pro account** (run `claude` once, use `/login`, pick the subscription —
   not an API key / Console account)
 
 ## Install
 
-```powershell
-pipx install git+https://github.com/EkinBarisC/claude-session-manager
+Grab a binary from the
+[releases page](https://github.com/EkinBarisC/claude-session-manager/releases)
+and put it on your PATH, or build from source with Go 1.26+:
+
+```sh
+go install github.com/EkinBarisC/claude-session-manager/cmd/csm@latest
 ```
 
-or from a clone: `pip install .` (use `pip install -e .` for hacking on csm
-itself). Either way the `csm` command is then available from any terminal:
+Then:
 
-```powershell
+```sh
 csm init
 csm doctor               # verifies claude login, config, and the nightly job
 ```
 
-## Usage
+## TUI
+
+Run `csm` with no arguments (or `csm tui`) for the interactive UI:
+
+- **Queue tab** — browse items; `n` queue a new task, `enter` full detail,
+  `R` run the selected item (live spinner, result lands in the table),
+  `r` requeue, `d` delete (with confirm), `u` refresh.
+- **Report tab** — scroll the run report.
+- **Config tab** — view the effective config.
+- Status bar shows rolling weekly spend against the budget, color-coded.
+
+## CLI usage
 
 Every command supports `-h`/`--help`. Item ids can be abbreviated to any
 unique prefix (`csm show ff3`).
 
-```powershell
+```sh
 # Queue tasks. --project/-C defaults to the current directory.
 csm add "Add input validation to the signup form, with tests"
-csm add "Review src/auth, write findings to REVIEW.md" -C C:\code\myapp --priority 5
+csm add "Review src/auth, write findings to REVIEW.md" -C ../myapp --priority 5
 
 # Per-item model, effort, and run mode (fall back to config defaults)
 csm add "Plan the v2 schema migration" --mode plan --effort high
@@ -94,8 +109,8 @@ quota across more items. Both have config-wide defaults (`default_run_mode`,
 
 Queue one tiny task against a scratch project and run it manually:
 
-```powershell
-csm add "Say hello and stop." --project C:\code\scratch
+```sh
+csm add "Say hello and stop." --project ../scratch
 csm run --max-items 1
 csm report
 ```
@@ -133,7 +148,7 @@ Edit via `csm config set/unset/edit`, or by hand (`csm config path`).
 | Key | Default | Meaning |
 |---|---|---|
 | `default_model` | `sonnet` | Model for items without `--model`. Pro has no Opus in Claude Code. |
-| `default_effort` | `medium` | `claude --effort` for items without `--effort` (`low`\|`medium`\|`high`\|`xhigh`\|`max`, or `null` for the CLI default). |
+| `default_effort` | `medium` | `claude --effort` for items without `--effort` (`low`\|`medium`\|`high`\|`xhigh`\|`max`, or `""` for the CLI default). |
 | `default_run_mode` | `safe` | Run mode for items without `--mode` (`plan`\|`safe`\|`full`). |
 | `weekly_token_budget` | `1000000` | Rolling 7-day cap on weighted tokens (input + cache_creation + output + 0.1×cache_read). Tune after watching a week in `csm status`. |
 | `context_window_tokens` | `200000` | Model context window size. |
@@ -157,24 +172,27 @@ Edit via `csm config set/unset/edit`, or by hand (`csm config path`).
   estimated cost even on subscription auth; nothing is billed.
 - **Rate-limit parsing** is the one unofficial surface. If Claude Code changes
   its limit message, csm fails safe: the run stops and items stay pending.
-- State lives in `~/.csm/` (override with the `CSM_HOME` env var).
+- State lives in `~/.csm/` (override with the `CSM_HOME` env var). The state
+  files are compatible with the earlier Python version of csm — an existing
+  queue, ledger, and session registry carry over as-is.
 
 ## Contributing
 
-Issues and PRs welcome. To develop locally:
+Issues and PRs welcome. To develop locally (Go 1.26+):
 
-```powershell
+```sh
 git clone https://github.com/EkinBarisC/claude-session-manager
 cd claude-session-manager
-pip install -e .
-$env:CSM_HOME = "$env:TEMP\csm-dev"   # PowerShell; keeps your real queue out of the way
-# export CSM_HOME=/tmp/csm-dev        # bash/zsh equivalent
+go test ./...
+go build -o csm ./cmd/csm
+CSM_HOME=/tmp/csm-dev ./csm status    # keep your real queue out of the way
 ```
 
-CI runs a headless smoke test on Windows, Ubuntu, and macOS (no Claude login
-needed) — see
+CI runs vet, tests, and a headless smoke test on Windows, Ubuntu, and macOS
+(no Claude login needed) — see
 [.github/workflows/ci.yml](.github/workflows/ci.yml). Releases are cut by
-pushing a `v*` tag, which builds the package and publishes a GitHub release.
+pushing a `v*` tag, which cross-compiles binaries for all six OS/arch pairs
+and publishes a GitHub release.
 
 ## License
 
