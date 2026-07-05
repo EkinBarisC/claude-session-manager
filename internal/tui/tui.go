@@ -89,8 +89,6 @@ type claudeDoneMsg struct {
 	err error
 }
 
-type refreshMsg struct{}
-
 // Run starts the TUI and blocks until the user quits.
 func Run() error {
 	if _, err := config.EnsureInit(); err != nil {
@@ -233,10 +231,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
-
-	case refreshMsg:
-		m.reload()
-		return m, nil
 
 	case claudeDoneMsg:
 		m.reload()
@@ -540,7 +534,7 @@ func (m *model) helpView() string {
 	var help string
 	switch m.mode {
 	case modeForm:
-		help = "tab/shift+tab move - enter next/submit - esc cancel"
+		help = "tab next field - shift+tab back - enter: newline in prompt, submit on priority - esc cancel"
 	case modeDetail:
 		help = "esc back"
 	case modeConfirmDelete:
@@ -616,11 +610,4 @@ func wordwrap(text string, width int) string {
 		out = append(out, line)
 	}
 	return strings.Join(out, "\n")
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

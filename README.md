@@ -40,8 +40,9 @@ csm doctor               # verifies claude login, config, and the nightly job
 
 Run `csm` with no arguments (or `csm tui`) for the interactive UI:
 
-- **Queue tab** — browse items; `n` queue a new task (the project field
-  tab-completes directories), `e` edit the selected item, `enter` full detail,
+- **Queue tab** — browse items; `n` queue a new task (the prompt is a
+  word-wrapping multi-line editor, and the project field tab-completes
+  directories), `e` edit the selected item, `enter` full detail,
   `R` run the selected item (live spinner, result lands in the table),
   `c` open the item's Claude Code session interactively — the TUI steps aside,
   you answer whatever the run got stuck on in `claude -r`, and you're back in

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -27,11 +28,16 @@ const (
 )
 
 var formLabels = [fieldCount]string{
-	"Prompt", "Project dir (tab completes)", "Model (empty = config)",
-	"Effort (empty = config)", "Mode (empty = config)", "Priority",
+	"Prompt (enter = newline, tab = next field)", "Project dir (tab completes)",
+	"Model (empty = config)", "Effort (empty = config)", "Mode (empty = config)",
+	"Priority",
 }
 
+// form is the add/edit task dialog. The prompt is a word-wrapping textarea
+// (long prompts stay fully visible); the remaining fields are single-line
+// inputs, so inputs[fieldPrompt] is unused.
 type form struct {
+	prompt textarea.Model
 	inputs [fieldCount]textinput.Model
 	focus  int
 	errMsg string
@@ -41,31 +47,36 @@ type form struct {
 
 func newForm() *form {
 	f := &form{}
-	for i := range f.inputs {
+	ta := textarea.New()
+	ta.Placeholder = "what should claude do?"
+	ta.CharLimit = 4000
+	ta.SetWidth(72)
+	ta.SetHeight(5)
+	ta.ShowLineNumbers = false
+	ta.Focus()
+	f.prompt = ta
+	for i := fieldProject; i < fieldCount; i++ {
 		in := textinput.New()
 		in.CharLimit = 500
 		in.Width = 60
 		f.inputs[i] = in
 	}
-	f.inputs[fieldPrompt].Placeholder = "what should claude do?"
 	f.inputs[fieldProject].SetValue(".")
 	f.inputs[fieldEffort].Placeholder = strings.Join(config.EffortLevels, "|")
 	f.inputs[fieldMode].Placeholder = strings.Join(config.RunModes, "|")
 	f.inputs[fieldPriority].SetValue("0")
-	f.inputs[fieldPrompt].Focus()
 	return f
 }
 
 func newEditForm(item *queue.Item) *form {
 	f := newForm()
 	f.editID = item.ID
-	f.inputs[fieldPrompt].SetValue(item.Prompt)
+	f.prompt.SetValue(item.Prompt)
 	f.inputs[fieldProject].SetValue(item.Project)
 	f.inputs[fieldModel].SetValue(item.Model)
 	f.inputs[fieldEffort].SetValue(item.Effort)
 	f.inputs[fieldMode].SetValue(item.Mode)
 	f.inputs[fieldPriority].SetValue(strconv.Itoa(item.Priority))
-	f.inputs[fieldPrompt].CursorEnd()
 	return f
 }
 
@@ -76,16 +87,23 @@ func (f *form) focusCmd() tea.Cmd {
 // update handles a key while the form is open. It returns (done, added,
 // cmd): done means the form should close, added is the new item id.
 func (f *form) update(msg tea.KeyMsg) (bool, string, tea.Cmd) {
-	switch msg.String() {
+	key := msg.String()
+	promptOwnsKey := f.focus == fieldPrompt &&
+		(key == "enter" || key == "up" || key == "down")
+
+	switch key {
 	case "esc":
 		return true, "", nil
 	case "tab", "shift+tab", "enter", "up", "down":
-		if msg.String() == "tab" && f.focus == fieldProject {
+		if promptOwnsKey {
+			break // newline / cursor movement inside the textarea
+		}
+		if key == "tab" && f.focus == fieldProject {
 			f.completeProject()
 			return false, "", nil
 		}
 		f.hint = ""
-		if msg.String() == "enter" && f.focus == fieldCount-1 {
+		if key == "enter" && f.focus == fieldCount-1 {
 			id, err := f.submit()
 			if err != nil {
 				f.errMsg = err.Error()
@@ -93,25 +111,38 @@ func (f *form) update(msg tea.KeyMsg) (bool, string, tea.Cmd) {
 			}
 			return true, id, nil
 		}
-		if msg.String() == "shift+tab" || msg.String() == "up" {
-			f.focus--
-		} else {
-			f.focus++
+		delta := 1
+		if key == "shift+tab" || key == "up" {
+			delta = -1
 		}
-		f.focus = (f.focus + fieldCount) % fieldCount
-		cmds := make([]tea.Cmd, 0, fieldCount)
-		for i := range f.inputs {
-			if i == f.focus {
-				cmds = append(cmds, f.inputs[i].Focus())
-			} else {
-				f.inputs[i].Blur()
-			}
-		}
-		return false, "", tea.Batch(cmds...)
+		return false, "", f.setFocus(f.focus + delta)
 	}
+
 	var cmd tea.Cmd
-	f.inputs[f.focus], cmd = f.inputs[f.focus].Update(msg)
+	if f.focus == fieldPrompt {
+		f.prompt, cmd = f.prompt.Update(msg)
+	} else {
+		f.inputs[f.focus], cmd = f.inputs[f.focus].Update(msg)
+	}
 	return false, "", cmd
+}
+
+func (f *form) setFocus(idx int) tea.Cmd {
+	f.focus = (idx + fieldCount) % fieldCount
+	var cmds []tea.Cmd
+	if f.focus == fieldPrompt {
+		cmds = append(cmds, f.prompt.Focus())
+	} else {
+		f.prompt.Blur()
+	}
+	for i := fieldProject; i < fieldCount; i++ {
+		if i == f.focus {
+			cmds = append(cmds, f.inputs[i].Focus())
+		} else {
+			f.inputs[i].Blur()
+		}
+	}
+	return tea.Batch(cmds...)
 }
 
 // completeProject tab-completes the project dir field against directories
@@ -173,7 +204,7 @@ func commonPrefix(names []string) string {
 }
 
 func (f *form) submit() (string, error) {
-	prompt := strings.TrimSpace(f.inputs[fieldPrompt].Value())
+	prompt := strings.TrimSpace(f.prompt.Value())
 	if prompt == "" {
 		return "", fmt.Errorf("prompt is required")
 	}
@@ -236,10 +267,12 @@ func (f *form) view(width int) string {
 	if f.editID != "" {
 		title = "Edit [" + f.editID + "]"
 	}
+	f.prompt.SetWidth(min(90, max(30, width-4)))
 	var b strings.Builder
 	b.WriteString(formTitleS.Render(title) + "\n\n")
-	for i, in := range f.inputs {
-		b.WriteString(" " + formLabelS.Render(formLabels[i]) + "\n " + in.View() + "\n")
+	b.WriteString(" " + formLabelS.Render(formLabels[fieldPrompt]) + "\n" + f.prompt.View() + "\n")
+	for i := fieldProject; i < fieldCount; i++ {
+		b.WriteString(" " + formLabelS.Render(formLabels[i]) + "\n " + f.inputs[i].View() + "\n")
 	}
 	if f.hint != "" {
 		b.WriteString("\n " + formLabelS.Render(f.hint))
