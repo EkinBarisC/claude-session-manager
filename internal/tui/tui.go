@@ -202,7 +202,7 @@ func (m *model) setReportContent() {
 	data, err := os.ReadFile(config.ReportPath())
 	content := "no report yet"
 	if err == nil {
-		content = string(data)
+		content = highlightReport(string(data))
 	}
 	vp := viewport.New(max(20, m.width-2), max(3, m.height-5))
 	vp.SetContent(content)
@@ -213,8 +213,8 @@ func (m *model) setReportContent() {
 func (m *model) setConfigContent() {
 	raw, _ := json.MarshalIndent(m.cfg, "", "  ")
 	vp := viewport.New(max(20, m.width-2), max(3, m.height-5))
-	vp.SetContent(fmt.Sprintf("# %s\n# edit with `csm config set <key> <value>`\n\n%s",
-		config.ConfigPath(), raw))
+	vp.SetContent(highlightJSON(fmt.Sprintf("# %s\n# edit with `csm config set <key> <value>`\n\n%s",
+		config.ConfigPath(), raw)))
 	m.configVP = vp
 }
 

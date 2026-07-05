@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,7 +27,7 @@ const (
 )
 
 var formLabels = [fieldCount]string{
-	"Prompt", "Project dir", "Model (empty = config)",
+	"Prompt", "Project dir (tab completes)", "Model (empty = config)",
 	"Effort (empty = config)", "Mode (empty = config)", "Priority",
 }
 
@@ -33,6 +35,7 @@ type form struct {
 	inputs [fieldCount]textinput.Model
 	focus  int
 	errMsg string
+	hint   string
 }
 
 func newForm() *form {
@@ -63,6 +66,11 @@ func (f *form) update(msg tea.KeyMsg) (bool, string, tea.Cmd) {
 	case "esc":
 		return true, "", nil
 	case "tab", "shift+tab", "enter", "up", "down":
+		if msg.String() == "tab" && f.focus == fieldProject {
+			f.completeProject()
+			return false, "", nil
+		}
+		f.hint = ""
 		if msg.String() == "enter" && f.focus == fieldCount-1 {
 			id, err := f.submit()
 			if err != nil {
@@ -90,6 +98,64 @@ func (f *form) update(msg tea.KeyMsg) (bool, string, tea.Cmd) {
 	var cmd tea.Cmd
 	f.inputs[f.focus], cmd = f.inputs[f.focus].Update(msg)
 	return false, "", cmd
+}
+
+// completeProject tab-completes the project dir field against directories
+// on disk, filling in the longest unambiguous prefix and listing candidates
+// in the hint line when there is more than one.
+func (f *form) completeProject() {
+	in := &f.inputs[fieldProject]
+	val := in.Value()
+	path := val
+	if path == "" {
+		path = "."
+	}
+	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = home + path[1:]
+		}
+	}
+	dir, prefix := filepath.Split(path)
+	readDir := dir
+	if readDir == "" {
+		readDir = "."
+	}
+	entries, err := os.ReadDir(readDir)
+	if err != nil {
+		f.hint = "cannot read " + readDir
+		return
+	}
+	var matches []string
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(strings.ToLower(e.Name()), strings.ToLower(prefix)) {
+			matches = append(matches, e.Name())
+		}
+	}
+	switch len(matches) {
+	case 0:
+		f.hint = "no matching directory"
+	case 1:
+		in.SetValue(dir + matches[0] + string(filepath.Separator))
+		in.CursorEnd()
+		f.hint = ""
+	default:
+		in.SetValue(dir + commonPrefix(matches))
+		in.CursorEnd()
+		f.hint = strings.Join(matches, "  ")
+		if len(f.hint) > 200 {
+			f.hint = f.hint[:200] + "..."
+		}
+	}
+}
+
+func commonPrefix(names []string) string {
+	prefix := names[0]
+	for _, n := range names[1:] {
+		for !strings.HasPrefix(strings.ToLower(n), strings.ToLower(prefix)) {
+			prefix = prefix[:len(prefix)-1]
+		}
+	}
+	return prefix
 }
 
 func (f *form) submit() (string, error) {
@@ -136,6 +202,9 @@ func (f *form) view(width int) string {
 	b.WriteString(formTitleS.Render("New task") + "\n\n")
 	for i, in := range f.inputs {
 		b.WriteString(" " + formLabelS.Render(formLabels[i]) + "\n " + in.View() + "\n")
+	}
+	if f.hint != "" {
+		b.WriteString("\n " + formLabelS.Render(f.hint))
 	}
 	if f.errMsg != "" {
 		b.WriteString("\n" + formErrS.Render(f.errMsg))
