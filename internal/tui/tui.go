@@ -22,6 +22,7 @@ import (
 	"github.com/EkinBarisC/claude-session-manager/internal/queue"
 	"github.com/EkinBarisC/claude-session-manager/internal/report"
 	"github.com/EkinBarisC/claude-session-manager/internal/runner"
+	"github.com/EkinBarisC/claude-session-manager/internal/runstate"
 	"github.com/EkinBarisC/claude-session-manager/internal/sessions"
 )
 
@@ -68,6 +69,7 @@ type model struct {
 	width    int
 	height   int
 	running  string // item id currently running, "" if idle
+	extRun   *runstate.Lock
 	flash    string
 	detailID string
 	ready    bool
@@ -114,6 +116,11 @@ func (m *model) reload() {
 	m.items = queue.Load()
 	if cfg, err := config.Load(); err == nil {
 		m.cfg = cfg
+	}
+	// a lock held by another process (scheduled or manual run)
+	m.extRun = runstate.Current()
+	if m.extRun != nil && m.extRun.PID == os.Getpid() {
+		m.extRun = nil
 	}
 	m.rebuildTable()
 	m.setReportContent()
@@ -444,11 +451,19 @@ func (m *model) startRun() (tea.Model, tea.Cmd) {
 		m.flash = fmt.Sprintf("weekly budget reached (%d / %d) - not running", spend, m.cfg.WeeklyTokenBudget)
 		return m, nil
 	}
+	held, err := runstate.Acquire("tui")
+	if err != nil {
+		m.reload() // pick up the external lock for the status bar
+		m.flash = "another csm run is already in progress"
+		return m, nil
+	}
+	held.SetItem(it.ID)
 	m.running = it.ID
 	m.flash = ""
 	cfg := m.cfg
 	id := it.ID
 	return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+		defer held.Release()
 		items := queue.Load()
 		item, err := queue.Find(items, id)
 		if err != nil {
@@ -523,6 +538,13 @@ func (m *model) statusView() string {
 	status := budgetS.Render(fmt.Sprintf("week %d/%d (%d%%)", spend, m.cfg.WeeklyTokenBudget, pct))
 	if m.running != "" {
 		status += "  " + m.spinner.View() + fmt.Sprintf("running [%s]...", m.running)
+	}
+	if m.extRun != nil {
+		note := fmt.Sprintf("external run in progress (pid %d, %s)", m.extRun.PID, m.extRun.Trigger)
+		if m.extRun.ItemID != "" {
+			note += fmt.Sprintf(" on [%s]", m.extRun.ItemID)
+		}
+		status += "  " + flashS.Render(note)
 	}
 	if m.flash != "" {
 		status += "  " + flashS.Render(m.flash)

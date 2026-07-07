@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -14,9 +15,19 @@ import (
 	"github.com/EkinBarisC/claude-session-manager/internal/queue"
 	"github.com/EkinBarisC/claude-session-manager/internal/report"
 	"github.com/EkinBarisC/claude-session-manager/internal/runner"
+	"github.com/EkinBarisC/claude-session-manager/internal/runstate"
 	"github.com/EkinBarisC/claude-session-manager/internal/schedule"
 	"github.com/EkinBarisC/claude-session-manager/internal/sessions"
 )
+
+// localTime renders an RFC3339 timestamp in the machine's local zone.
+func localTime(rfc3339 string) string {
+	t, err := time.Parse(time.RFC3339, rfc3339)
+	if err != nil {
+		return rfc3339
+	}
+	return t.Local().Format("2006-01-02 15:04")
+}
 
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
@@ -68,6 +79,18 @@ func newStatusCmd() *cobra.Command {
 			cfg, err := config.Load()
 			if err != nil {
 				return fail("%v", err)
+			}
+			if lock := runstate.Current(); lock != nil {
+				line := fmt.Sprintf("Run in progress: pid %d, %s, started %s",
+					lock.PID, lock.Trigger, localTime(lock.StartedAt))
+				if lock.ItemID != "" {
+					line += fmt.Sprintf(", on [%s]", lock.ItemID)
+				}
+				fmt.Println(line)
+			}
+			if lr := runstate.ReadLastRun(); lr != nil {
+				fmt.Printf("Last run: %s (%s) - %d item(s), %s\n",
+					localTime(lr.FinishedAt), lr.Trigger, lr.Processed, lr.Outcome)
 			}
 			items := queue.Load()
 			byStatus := map[string]int{}
@@ -245,11 +268,30 @@ func newDoctorCmd() *cobra.Command {
 			}
 			check(true, "billing env vars", detail)
 
-			jobDetail := "not registered (run `csm schedule`)"
-			if schedule.Exists() {
-				jobDetail = "registered"
+			// A registered job whose runs stopped happening is the silent
+			// failure mode (expired login, machine asleep, task removed
+			// behind our back) - that one deserves a FAIL.
+			lastRun := runstate.ReadLastRun()
+			switch {
+			case !schedule.Exists():
+				check(true, "nightly job", "not registered (run `csm schedule`)")
+			case lastRun == nil:
+				check(true, "nightly job", "registered; no run recorded yet")
+			case lastRun.Age() > 48*time.Hour:
+				check(false, "nightly job",
+					fmt.Sprintf("registered but the last run finished %s ago (%s) - "+
+						"is the machine awake during quiet hours?",
+						lastRun.Age().Truncate(time.Hour), localTime(lastRun.FinishedAt)))
+			default:
+				check(true, "nightly job",
+					fmt.Sprintf("registered; last run %s (%s)",
+						localTime(lastRun.FinishedAt), lastRun.Outcome))
 			}
-			check(true, "nightly job", jobDetail)
+
+			if lock := runstate.Current(); lock != nil {
+				check(true, "run in progress",
+					fmt.Sprintf("pid %d since %s", lock.PID, localTime(lock.StartedAt)))
+			}
 
 			items := queue.Load()
 			counts := map[string]int{}

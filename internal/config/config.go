@@ -4,6 +4,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -99,6 +100,8 @@ func QueuePath() string    { return filepath.Join(StateDir(), "queue.json") }
 func SessionsPath() string { return filepath.Join(StateDir(), "sessions.json") }
 func LedgerPath() string   { return filepath.Join(StateDir(), "ledger.json") }
 func ReportPath() string   { return filepath.Join(StateDir(), "report.md") }
+func LockPath() string     { return filepath.Join(StateDir(), "run.lock") }
+func LastRunPath() string  { return filepath.Join(StateDir(), "lastrun.json") }
 
 // Load returns defaults overlaid with whatever the config file sets.
 func Load() (Config, error) {
@@ -239,11 +242,13 @@ func DefaultFor(key string) any {
 }
 
 // ReadJSON loads path into out; missing or unparseable files leave out as-is.
+// A UTF-8 BOM (common when files are hand-edited on Windows) is tolerated.
 func ReadJSON(path string, out any) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return
 	}
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))
 	json.Unmarshal(data, out)
 }
 

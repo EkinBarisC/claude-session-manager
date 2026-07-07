@@ -12,6 +12,7 @@ import (
 	"github.com/EkinBarisC/claude-session-manager/internal/ledger"
 	"github.com/EkinBarisC/claude-session-manager/internal/queue"
 	"github.com/EkinBarisC/claude-session-manager/internal/report"
+	"github.com/EkinBarisC/claude-session-manager/internal/runstate"
 	"github.com/EkinBarisC/claude-session-manager/internal/sessions"
 )
 
@@ -82,22 +83,39 @@ func Run(untilHHMM string, maxItems int, dryRun bool, itemID string) int {
 		return ExitOK
 	}
 
-	if !dryRun {
-		trigger := "manual"
-		if until != nil {
-			trigger = "scheduled until " + until.Format("15:04")
-		}
-		report.AppendRunHeader(trigger)
+	trigger := "manual"
+	if until != nil {
+		trigger = "scheduled until " + until.Format("15:04")
 	}
 
 	ran := 0
+	outcome := "completed"
+	var held *runstate.Held
+	// Dry runs don't invoke claude or mutate anything, so they take no
+	// lock and leave no heartbeat.
+	if !dryRun {
+		held, err = runstate.Acquire(trigger)
+		if err != nil {
+			fmt.Println("csm:", err)
+			return ExitUsage
+		}
+		defer held.Release()
+		startedAt := time.Now().UTC().Format(time.RFC3339)
+		defer func() {
+			runstate.WriteLastRun(startedAt, trigger, ran, outcome)
+		}()
+		report.AppendRunHeader(trigger)
+	}
+
 	for _, item := range todo {
 		if until != nil && !time.Now().Before(*until) {
 			fmt.Printf("csm: reached --until %s, stopping\n", until.Format("15:04"))
+			outcome = "reached --until " + until.Format("15:04")
 			break
 		}
 		if maxItems > 0 && ran >= maxItems {
 			fmt.Printf("csm: reached --max-items %d, stopping\n", maxItems)
+			outcome = fmt.Sprintf("reached --max-items %d", maxItems)
 			break
 		}
 
@@ -106,6 +124,7 @@ func Run(untilHHMM string, maxItems int, dryRun bool, itemID string) int {
 			msg := fmt.Sprintf("weekly budget reached (%d / %d weighted tokens in the last 7 days)",
 				spend, cfg.WeeklyTokenBudget)
 			fmt.Printf("csm: %s, stopping\n", msg)
+			outcome = "weekly budget reached"
 			if !dryRun {
 				report.AppendNote(msg)
 			}
@@ -132,12 +151,14 @@ func Run(untilHHMM string, maxItems int, dryRun bool, itemID string) int {
 			continue
 		}
 
-		result := claude.RunItem(cfg, item, resumeID, env)
+		held.SetItem(item.ID)
+		result := runItemWithProgress(cfg, item, resumeID, env)
 		ran++
 
 		if result.AuthError {
 			fmt.Printf("csm: %s - stopping the whole run (no quota burned on a broken login)\n", result.Error)
 			report.AppendNote("run aborted: " + result.Error)
+			outcome = "aborted: " + result.Error
 			return ExitAuthError
 		}
 
@@ -159,6 +180,7 @@ func Run(untilHHMM string, maxItems int, dryRun bool, itemID string) int {
 				continue // item stays pending, retry after reset
 			}
 			fmt.Println("csm: no reset time inside the run window - stopping")
+			outcome = "usage limit reached, no reset inside the run window"
 			return ExitRateLimit
 		}
 
@@ -177,6 +199,44 @@ func Run(untilHHMM string, maxItems int, dryRun bool, itemID string) int {
 
 	fmt.Printf("csm: done (%d item(s) processed)\n", ran)
 	return ExitOK
+}
+
+// runItemWithProgress runs one item while keeping the terminal alive: on a
+// TTY a single line is redrawn with the elapsed time; when output is piped
+// (cron log) a plain line is printed once a minute instead.
+func runItemWithProgress(cfg config.Config, item *queue.Item, resumeID string, env []string) claude.Result {
+	done := make(chan claude.Result, 1)
+	go func() { done <- claude.RunItem(cfg, item, resumeID, env) }()
+
+	tty := stdoutIsTTY()
+	interval := time.Minute
+	if tty {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	start := time.Now()
+	for {
+		select {
+		case result := <-done:
+			if tty {
+				fmt.Printf("\r%*s\r", 70, "")
+			}
+			return result
+		case <-ticker.C:
+			elapsed := time.Since(start).Truncate(time.Second)
+			if tty {
+				fmt.Printf("\r  running [%s] for %s (timeout %dm) ", item.ID, elapsed, cfg.ItemTimeoutMinutes)
+			} else {
+				fmt.Printf("csm: [%s] still running after %s\n", item.ID, elapsed)
+			}
+		}
+	}
+}
+
+func stdoutIsTTY() bool {
+	info, err := os.Stdout.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 // RecordOutcome persists everything one finished run produced: session
