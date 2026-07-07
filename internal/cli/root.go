@@ -61,6 +61,7 @@ func newRootCmd() *cobra.Command {
 		newScheduleCmd(),
 		newConfigCmd(),
 		newDoctorCmd(),
+		newUsageCmd(),
 		newTuiCmd(),
 	)
 	return root

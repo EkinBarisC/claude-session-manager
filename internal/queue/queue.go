@@ -31,9 +31,10 @@ type Item struct {
 	Status          string         `json:"status"`
 	CreatedAt       string         `json:"created_at"`
 	SessionID       string         `json:"session_id"`
+	Branch          string         `json:"branch"`
 	Summary         string         `json:"summary"`
 	Error           string         `json:"error"`
-	Tokens          map[string]int `json:"tokens"`
+	Tokens          map[string]any `json:"tokens"`
 	FinishedAt      string         `json:"finished_at"`
 }
 
@@ -121,10 +122,13 @@ func PendingItems(items []*Item) []*Item {
 }
 
 // Finish records an item's outcome and persists the queue.
-func Finish(items []*Item, item *Item, status string, sessionID, summary, errMsg string, tokens map[string]int) error {
+func Finish(items []*Item, item *Item, status string, sessionID, branch, summary, errMsg string, tokens map[string]any) error {
 	item.Status = status
 	if sessionID != "" {
 		item.SessionID = sessionID
+	}
+	if branch != "" {
+		item.Branch = branch
 	}
 	item.Summary = summary
 	item.Error = errMsg

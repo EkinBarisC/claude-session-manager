@@ -47,8 +47,23 @@ Automated run rules (csm):
    needed). Commit your changes. NEVER push, force-reset, or delete branches.
 3. Before finishing, create or update ./context.md (max 150 lines): current
    state, key decisions, remaining work, and the active branch name.
-4. End your reply with exactly one line: SUMMARY: <one sentence result>.
+4. End your reply with exactly two lines:
+   BRANCH: <the git branch you worked on, or "none">
+   SUMMARY: <one sentence result>
 `
+
+// Slash-command shape: "/word" (letters, digits, :, -) followed by a space
+// or end. Paths like /tmp/x.sh don't match.
+var slashPromptRe = regexp.MustCompile(`^/[A-Za-z][\w:-]*(\s|$)`)
+
+// IsSlashPrompt reports whether the prompt invokes a Claude Code slash
+// command or skill (e.g. "/learn go build tags", "/usage"). Print mode runs
+// these like the interactive REPL does, but only if the prompt is passed
+// verbatim - appending the csm protocol footer would pollute the command's
+// arguments, so BuildCommand skips it for these.
+func IsSlashPrompt(prompt string) bool {
+	return slashPromptRe.MatchString(strings.TrimSpace(prompt))
+}
 
 var (
 	rateLimitRe = regexp.MustCompile(`(?i)usage limit|rate limit|limit reached|limit will reset|out of extra usage`)
@@ -65,18 +80,46 @@ type Result struct {
 	TimedOut    bool
 	ResetAt     *time.Time
 	SessionID   string
-	Usage       map[string]int
+	Usage       map[string]any
 	ResultText  string
 	Summary     string
+	Branch      string
 	Error       string
 }
 
+// UsageInt reads a numeric field from a usage map. encoding/json decodes
+// numbers as float64; anything non-numeric counts as zero.
+func UsageInt(usage map[string]any, key string) int {
+	f, ok := usage[key].(float64)
+	if !ok {
+		return 0
+	}
+	return int(f)
+}
+
 // ContextTokens estimates the session's context size after this run.
+//
+// The usage totals accumulate across every API call of the run (a long run
+// reads the cache once per tool-use turn), so summing them overstates the
+// context by an order of magnitude and would force a rotation after every
+// run. The last entry of the iterations array is one real API call: its
+// input + cache tokens are what the next resume would actually carry.
 func (r Result) ContextTokens() int {
-	return r.Usage["input_tokens"] +
-		r.Usage["cache_creation_input_tokens"] +
-		r.Usage["cache_read_input_tokens"] +
-		r.Usage["output_tokens"]
+	if iters, ok := r.Usage["iterations"].([]any); ok && len(iters) > 0 {
+		if last, ok := iters[len(iters)-1].(map[string]any); ok {
+			ctx := UsageInt(last, "input_tokens") +
+				UsageInt(last, "cache_read_input_tokens") +
+				UsageInt(last, "cache_creation_input_tokens") +
+				UsageInt(last, "output_tokens")
+			if ctx > 0 {
+				return ctx
+			}
+		}
+	}
+	return UsageInt(r.Usage, "input_tokens") +
+		UsageInt(r.Usage, "cache_creation_input_tokens") +
+		UsageInt(r.Usage, "cache_read_input_tokens") +
+		UsageInt(r.Usage, "output_tokens")
 }
 
 // StrippedEnv returns base without billing-capable variables, plus the
@@ -131,8 +174,12 @@ func BuildCommand(cfg config.Config, item *queue.Item, resumeID string) ([]strin
 	if resumeID != "" {
 		cmd = append(cmd, "--resume", resumeID)
 	}
+	prompt := item.Prompt
+	if !IsSlashPrompt(prompt) {
+		prompt += Protocol
+	}
 	cmd = append(cmd,
-		"-p", item.Prompt+Protocol,
+		"-p", prompt,
 		"--output-format", "json",
 		"--model", model,
 	)
@@ -189,9 +236,13 @@ func ParseResetTime(text string, now time.Time) *time.Time {
 	return nil
 }
 
+// payload is the result object of `claude -p --output-format json`. Usage
+// is loosely typed: the real object mixes numbers with nested objects and
+// strings (iterations, cache_creation, service_tier, ...), and a stricter
+// type would make the whole unmarshal fail.
 type payload struct {
 	SessionID string         `json:"session_id"`
-	Usage     map[string]int `json:"usage"`
+	Usage     map[string]any `json:"usage"`
 	Result    string         `json:"result"`
 	IsError   bool           `json:"is_error"`
 }
@@ -264,6 +315,7 @@ func RunItem(cfg config.Config, item *queue.Item, resumeID string, env []string)
 
 	res.OK = true
 	res.Summary = ExtractSummary(res.ResultText)
+	res.Branch = ExtractBranch(res.ResultText)
 	// A run that ends by asking us something needs a human, not the queue.
 	lastLine := lastNonEmptyLine(res.ResultText)
 	if res.Summary == "" && strings.HasSuffix(lastLine, "?") {
@@ -275,11 +327,25 @@ func RunItem(cfg config.Config, item *queue.Item, resumeID string, env []string)
 
 // ExtractSummary finds the trailing "SUMMARY: ..." line of a result.
 func ExtractSummary(text string) string {
+	return trailingField(text, "SUMMARY:")
+}
+
+// ExtractBranch finds the trailing "BRANCH: ..." line of a result; "none"
+// (no git work happened) comes back as "".
+func ExtractBranch(text string) string {
+	branch := trailingField(text, "BRANCH:")
+	if strings.EqualFold(branch, "none") {
+		return ""
+	}
+	return branch
+}
+
+func trailingField(text, prefix string) string {
 	lines := strings.Split(strings.TrimSpace(text), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(strings.ToUpper(line), "SUMMARY:") {
-			return strings.TrimSpace(line[len("SUMMARY:"):])
+		if strings.HasPrefix(strings.ToUpper(line), prefix) {
+			return strings.TrimSpace(line[len(prefix):])
 		}
 	}
 	return ""

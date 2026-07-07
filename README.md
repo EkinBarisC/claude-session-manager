@@ -41,8 +41,9 @@ csm doctor               # verifies claude login, config, and the nightly job
 Run `csm` with no arguments (or `csm tui`) for the interactive UI:
 
 - **Queue tab** — browse items; `n` queue a new task (the prompt is a
-  word-wrapping multi-line editor, and the project field tab-completes
-  directories), `e` edit the selected item, `enter` full detail,
+  word-wrapping multi-line editor, prompts that invoke a slash command or
+  skill are tinted cyan the moment they're recognized, and the project field
+  tab-completes directories), `e` edit the selected item, `enter` full detail,
   `R` run the selected item (live spinner, result lands in the table),
   `c` open the item's Claude Code session interactively — the TUI steps aside,
   you answer whatever the run got stuck on in `claude -r`, and you're back in
@@ -52,8 +53,10 @@ Run `csm` with no arguments (or `csm tui`) for the interactive UI:
 - **Config tab** — edit settings in place: pick a key, `enter` to change the
   value (validated before saving), `d` to reset it to its default. Values are
   syntax-highlighted JSON.
-- Status bar shows rolling weekly spend against the budget, color-coded, and
-  warns when a scheduled or manual run is executing outside the TUI.
+- Status bar shows **real plan usage** (5h session and weekly limits, fetched
+  from `claude /usage` — free, no tokens spent) next to the bot's own weekly
+  ledger, all color-coded, and warns when a scheduled or manual run is
+  executing outside the TUI.
 - `ctrl+z` suspends the TUI on macOS/Linux (`fg` brings it back).
 
 ## CLI usage
@@ -70,8 +73,16 @@ csm add "Review src/auth, write findings to REVIEW.md" -C ../myapp --priority 5
 csm add "Plan the v2 schema migration" --mode plan --effort high
 csm add "Bulk-rename fixtures" -m haiku --effort low
 
+# Slash commands and skills work too - prompts starting with /command run
+# your Claude Code commands/skills verbatim (csm's protocol footer is
+# skipped so their arguments stay clean). The skill must be available in
+# the target project or your user scope.
+csm add "/learn go build tags" -C ../scratch
+csm add "/code-review" -C ../myapp --mode plan
+
 # Inspect and manage the queue
-csm status               # overview: queue, weekly spend, sessions
+csm status               # overview: queue, weekly spend, sessions, last run
+csm usage                # real plan usage: 5h session + weekly limits (free to query)
 csm list                 # pending + failed items (ls works too; --all for everything)
 csm show <id>            # one item in full
 csm edit <id> --priority 9 --effort max
@@ -136,7 +147,9 @@ csm report
    (state, decisions, remaining work, branch — max 150 lines).
 3. **Safety** — tasks work on `csm/<slug>` git branches and may edit files, run
    tests, and commit. `git push`, `reset`, `rebase`, `clean`, `rm` are blocked
-   via `--disallowedTools`. You review branches in the morning.
+   via `--disallowedTools`. Each item records the branch it worked on (shown in
+   `csm show`, the TUI detail view, and the report), so morning review is
+   `git log <branch>` away.
 4. **Limits** — when Claude Code reports the usage limit, csm parses the reset
    time and sleeps until then (if it fits inside `--until`), else stops. Items
    are never lost — unfinished ones stay pending.
@@ -147,8 +160,14 @@ csm report
 6. **Failures** — a failed / timed-out / question-asking task is marked
    `needs_attention` with its session id saved; the runner moves on. Pick it up
    with `claude -r <session-id>` or `csm requeue <id>`. No auto-retries.
-7. **Report** — `~/.csm/report.md` gets one block per item: status, project,
-   session id, one-line summary, and token spend vs budget.
+7. **Report & transcripts** — `~/.csm/report.md` gets one block per item:
+   status, project, branch, session id, one-line summary, and token spend vs
+   budget. Each run's full result text is saved to `~/.csm/logs/<item-id>.md`
+   so odd failures can be read without resuming the session.
+8. **Real limits** — `csm usage` (and the TUI status bar) query `claude /usage`
+   for actual 5h-session and weekly percentages, including your interactive
+   use on this machine. The ledger budget above only guards what csm itself
+   spends; the /usage numbers are the account-level truth.
 8. **Visibility & locking** — while an item runs, `csm run` shows a live
    elapsed-time heartbeat (a redrawn line on a terminal, a once-a-minute line
    in the cron log). Every run holds `~/.csm/run.lock` while active and writes
